@@ -1,0 +1,103 @@
+---
+title: "Untitled"
+author: "Kevin Wang"
+date: "10/02/2019"
+output: html_document
+---
+
+
+# Summary
+
++ `glmnetUtils` performs CV on both $\alpha$ and $\lambda$, and the list of `cv.glmnet` objects are stored in the output `modlist` slot.
+
+```{r}
+library(glmnet)
+library(glmnetUtils)
+library(tidyverse)
+
+theme_set(theme_classic() +
+            theme(legend.position = "bottom"))
+
+load("RData/Leukemia.RData")
+
+leuk <- do.call(data.frame, Leukemia)
+leuk = leuk[,c(1:9, ncol(leuk))]
+
+leuk %>% dim
+
+leukMod <- cva.glmnet(y ~ ., data = leuk, family = "binomial"
+                      # ,alpha = c(0, 0.5, 1), 
+                      # lambda = 10^-seq(1, 5, by = 0.1)
+)
+
+leukMod$alpha
+
+plot(leukMod)
+glmnetUtils::minlossplot(leukMod)
+```
+
+
+# Extracting coef
+```{r}
+# leuk
+listAlpha = seq(0, 1, length.out = 5)
+listGlmnet = purrr::map(
+  listAlpha, 
+  ~ glmnet::glmnet(
+    x = as.matrix(leuk[,1:9]),
+    y = as.matrix(leuk[,ncol(leuk)]),
+    family = "binomial", 
+    alpha = .x
+  )
+)
+
+names(listGlmnet) = listAlpha
+
+coef2Df = function(cvglmnetObj){
+  coefMat = as.matrix(coef(cvglmnetObj, s = cvglmnetObj$lambda))
+  colnames(coefMat) = cvglmnetObj$lambda
+  coefDf = reshape2::melt(
+    coefMat,
+    varnames = c("variables", "lambda"),
+    value.name = "coef") %>% 
+    tibble::as_tibble()
+  
+  return(coefDf)
+}
+
+coefDf = purrr::map_dfr(
+  .x = listGlmnet, 
+  .f = coef2Df, 
+  .id = "alpha") %>% 
+  dplyr::mutate(
+    alpha = as.numeric(alpha),
+    absCoef = abs(coef),
+    size = ifelse(absCoef > 1, 1, absCoef)
+  ) %>% 
+  group_by(alpha, variables) %>% 
+  dplyr::mutate(
+    maxAbsCoef = max(absCoef),
+    scaleCoef = absCoef/maxAbsCoef
+  )
+
+
+
+
+coefDf %>% 
+  ggplot(aes(x = lambda, y = coef)) +
+  geom_point(aes(colour = size)) +
+  # geom_line(aes(size = size, group = variables)) +
+  geom_hline(yintercept = 0, colour = "gray") +
+  scale_color_distiller(palette = "Spectral") +
+  facet_grid(variables~alpha, scales = "free")
+
+
+coefDf %>% 
+  ggplot(aes(x = lambda, y = coef, colour = scaleCoef)) +
+  geom_point() +
+  # geom_line(aes(size = size, group = variables)) +
+  geom_hline(yintercept = 0, colour = "gray") +
+  scale_color_distiller(palette = "Spectral") +
+  facet_grid(variables~alpha, scales = "free")
+```
+
