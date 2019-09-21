@@ -1,0 +1,187 @@
+---
+title: "CPOP_sim"
+author: "Kevin Wang"
+date: "21/09/2019"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(mvtnorm)
+library(glmnet)
+library(Matrix)
+
+theme_set(theme_classic(18) +
+            theme(legend.position = "bottom"))
+```
+
+
+```{r}
+n = 500
+p = 40
+set.seed(1234)
+variables = sprintf("X%02d", 1:p)
+```
+
+
+# Switching mu
+```{r}
+mu1 = runif(p, -5, 5)
+switch_mu1 = rbinom(p, size = 1, prob = 0.3)
+mu2 = map2_dbl(.x = mu1, 
+               .y = switch_mu1,
+               .f = ~ ifelse(.y == 1, runif(1, -5, 5), .x))
+
+
+coef_tibble = tibble(
+  variables,
+  mu1,
+  switch_mu1,
+  mu2
+)
+
+coef_tibble %>% 
+  ggplot(aes(x = mu1, y = mu2, 
+             colour = factor(switch_mu1))) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, colour = "red")
+```
+
+
+# Switching sigma 
+
+```{r}
+sigma12 = matrix(rnorm(p^2), ncol = p) 
+sigma1 = t(sigma12) %*% sigma12
+dimnames(sigma1) = list(variables, variables)
+# sigma2 = sigma1
+sigma12 = matrix(rnorm(p^2), ncol = p) 
+sigma2 = t(sigma12) %*% sigma12
+dimnames(sigma2) = list(variables, variables)
+```
+
+
+```{r}
+library(ggcorrplot)
+cor1 = cov2cor(sigma1)
+ggcorrplot(cor1,
+           hc.order = FALSE,
+           type = "lower",
+           outline.color = "white")
+```
+
+
+
+```{r}
+beta1 = rbeta(p, shape1 = 0.1, shape2 = 0.5)
+switch_beta1 = rbinom(p, size = 1, prob = 0.2)
+beta2 = map2_dbl(.x = beta1, 
+               .y = switch_beta1,
+               .f = ~ ifelse(.y == 1, 
+                             rbeta(1, shape1 = 0.1, shape2 = 0.5),
+                             .x))
+
+coef_tibble = coef_tibble %>% 
+  dplyr::mutate(beta1, switch_beta1, beta2)
+
+
+coef_tibble %>% 
+  ggplot(aes(x = beta1, y = beta2, 
+             colour = factor(switch_beta1))) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, colour = "red")
+```
+
+
+```{r}
+x1 = mvtnorm::rmvnorm(n = n, mean = mu1, sigma = sigma1)
+x2 = mvtnorm::rmvnorm(n = n, mean = mu2, sigma = sigma2)
+colnames(x1) = colnames(x2) = variables
+
+y1 = x1 %*% beta1
+y2 = x2 %*% beta2
+```
+
+
+
+# naive cv.glmnet
+```{r}
+naive1 = glmnet::cv.glmnet(x = x1, y = y1, alpha = 0)
+naive2 = glmnet::cv.glmnet(x = x2, y = y2, alpha = 0)
+```
+
+
+## Compare coef
+```{r}
+coef_tibble = coef_tibble %>% 
+  left_join(
+    CPOP::get_lasso_coef(naive1, s = "lambda.min", tibble = TRUE) %>% 
+      dplyr::rename(variables = feature_name,
+                    beta_hat1 = beta), 
+    by = c("variables")) %>% 
+  left_join(
+    CPOP::get_lasso_coef(naive2, s = "lambda.min", tibble = TRUE) %>% 
+      dplyr::rename(variables = feature_name,
+                    beta_hat2 = beta), 
+    by = c("variables")) %>% 
+  dplyr::mutate(beta_hat1 = coalesce(beta_hat1, 0),
+                beta_hat2 = coalesce(beta_hat2, 0))
+
+coef_tibble %>% 
+  ggplot(aes(x = beta_hat1, y = beta_hat2, 
+             colour = factor(switch_beta1))) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, colour = "red")
+```
+
+
+## Prediction on x1
+```{r}
+pred_naive1_x1 = predict(naive1, newx = x1, s = "lambda.min")
+pred_naive2_x1 = predict(naive2, newx = x1, s = "lambda.min") 
+cor(pred_naive1_x1, pred_naive2_x1)
+plot(pred_naive1_x1, pred_naive2_x1)
+```
+
+## Prediction on x2
+```{r}
+pred_naive1_x2 = predict(naive1, newx = x2, s = "lambda.min")
+pred_naive2_x2 = predict(naive2, newx = x2, s = "lambda.min")
+cor(pred_naive1_x2, pred_naive2_x2)
+plot(pred_naive1_x2, pred_naive2_x2)
+```
+
+
+```{r}
+library(CPOP)
+CPOP_model = CPOP::cpop_model(z1 = x1, 
+                 z2 = x2, 
+                 y1 = y1, 
+                 y2 = y2, 
+                 w = CPOP::compute_weights(x1, x2),
+                 family = "gaussian")
+
+coef_tibble = coef_tibble %>% 
+  dplyr::mutate(
+    CPOP_feature = variables %in% CPOP_model$feature
+  )
+
+
+coef_tibble %>% 
+  ggplot(aes(x = beta1, y = beta2, 
+             colour = factor(CPOP_feature))) +
+  geom_point(size = 3) +
+  geom_abline(slope = 1, intercept = 0, colour = "red")
+
+CPOP::plot_cpop_coef(CPOP_model, type = "point")
+CPOP::plot_cpop_coef(CPOP_model, type = "bar")
+
+pred_cpop1_x1 = CPOP::predict_cpop(CPOP_model, newz = x1, 
+                                  s = "lambda.min", model_number = 1)
+pred_cpop2_x1 = CPOP::predict_cpop(CPOP_model, newz = x1,
+                                   s = "lambda.min", model_number = 2)
+
+plot(pred_cpop1_x1, pred_cpop2_x1)
+cor(pred_cpop1_x1, pred_cpop2_x1)
+```
+
