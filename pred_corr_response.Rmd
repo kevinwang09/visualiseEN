@@ -1,0 +1,116 @@
+---
+title: "Correlating prediction with true response"
+author: "Kevin Wang"
+date: "2019 Sep 20"
+output: html_document
+---
+
+In the CPOP work, I realised that the correlation/identity distance/new identity distance is very useful in achieving stable prediction values. 
+
+
+We will visualise the concorance score across tuning parameters value here. 
+
+
+```{r}
+library(tidyverse)
+library(glmnet)
+```
+
+
+```{r}
+n = 200
+p = 10
+k = 5
+rho = 0.5
+
+lassoLambda = "lambda.min"
+
+set.seed(1234)
+
+
+# signalSigma = diag(runif(k, 0, 3))
+
+rows = matrix(rep(c(1:p), p), nrow = p, byrow = F)
+cols = t(rows)
+sigma = rho^abs(rows - cols)
+
+
+X = mvtnorm::rmvnorm(
+  n = n,
+  mean = rep(0, p),
+  sigma = sigma)
+
+
+beta = c(rep(0.2, k), rep(0, p-k))
+y = X %*% beta + rnorm(n, 0, 1)
+```
+
+
+```{r}
+lambda = 10^seq(0, -3, length = 100)
+glmnet_obj = glmnet::cv.glmnet(
+  x = X,
+  y = y,
+  family = "gaussian", 
+  alpha = 0.1)
+
+
+plot(glmnet_obj$glmnet.fit)
+```
+
+
+```{r}
+resub_mat = predict(glmnet_obj, newx = X, s = lambda)
+```
+
+
+```{r}
+cor_resub_y = purrr::map_dbl(
+  .x = seq_len(ncol(resub_mat)),
+  .f = ~ cor(resub_mat[,.x], y))
+
+plot(log(lambda), cor_resub_y, type = "l")
+abline(v = log(glmnet_obj$lambda.min), col = "red")
+abline(v = log(lambda[which.max(cor_resub_y)]), col = "blue")
+
+plot(resub_mat[,which.max(cor_resub_y)], y)
+abline(a = 0, b = 1, col = "red")
+```
+
+
+```{r}
+id_resub_y = purrr::map_dbl(
+  .x = seq_len(ncol(resub_mat)),
+  .f = ~ CPOP::identityDist(resub_mat[,.x], y))
+
+plot(log(lambda), id_resub_y, type = "l")
+abline(v = log(glmnet_obj$lambda.min), col = "red")
+abline(v = log(lambda[which.min(id_resub_y)]), col = "blue")
+
+plot(resub_mat[,which.min(id_resub_y)], y)
+abline(a = 0, b = 1, col = "red")
+```
+
+```{r}
+new_iden_dist = function(x, y){
+  CPOP::identityDist(x, y) +
+    abs(e1071::skewness(x-y))
+}
+
+nid_resub_y = purrr::map_dbl(
+  .x = seq_len(ncol(resub_mat)),
+  .f = ~ new_iden_dist(resub_mat[,.x], y))
+
+plot(log(lambda), nid_resub_y, type = "l")
+abline(v = log(glmnet_obj$lambda.min), col = "red")
+abline(v = log(lambda[which.min(nid_resub_y)]), col = "blue")
+
+plot(resub_mat[,which.min(nid_resub_y)], y)
+abline(a = 0, b = 1, col = "red")
+```
+
+
+```{r}
+sessioninfo::session_info()
+```
+

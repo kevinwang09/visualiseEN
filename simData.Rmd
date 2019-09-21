@@ -1,0 +1,151 @@
+---
+title: "Untitled"
+author: "Kevin Wang"
+date: "12/02/2019"
+output: html_document
+---
+
+
+```{r}
+library(glmnet)
+library(glmnetUtils)
+library(tidyverse)
+
+theme_set(theme_classic() +
+            theme(legend.position = "bottom"))
+```
+
+# Simulation of data
+
+```{r}
+n = 100
+p = 10
+k = 5
+rho = 0.5
+
+lassoLambda = "lambda.min"
+
+set.seed(10)
+
+
+# signalSigma = diag(runif(k, 0, 3))
+
+rows = matrix(rep(c(1:p), p), nrow = p, byrow = F)
+cols = t(rows)
+sigma = rho^abs(rows - cols)
+
+
+X = mvtnorm::rmvnorm(
+  n = n,
+  mean = rep(0, p),
+  sigma = sigma)
+
+
+# beta = sample(c(rep(0, p-k), rep(1, k)), replace = FALSE)
+beta = c(rep(0, p-k), rep(1, k))
+y = X %*% beta + rnorm(n, 0, 1)
+```
+
+
+# glmnetUtils
+```{r}
+
+```
+
+
+
+# List Glmnet
+
+```{r}
+listAlpha = seq(0, 1, length.out = 3)
+listGlmnet = purrr::map(
+  listAlpha, 
+  ~ glmnet::glmnet(
+    x = X,
+    y = y,
+    family = "gaussian", 
+    alpha = .x, 
+  )
+)
+
+names(listGlmnet) = listAlpha
+
+coef2Df = function(cvglmnetObj){
+  coefMat = as.matrix(coef(cvglmnetObj, s = cvglmnetObj$lambda))
+  colnames(coefMat) = cvglmnetObj$lambda
+  coefDf = reshape2::melt(
+    coefMat,
+    varnames = c("variables", "lambda"),
+    value.name = "coef") %>% 
+    tibble::as_tibble() %>% 
+    dplyr::mutate(
+      nLambda = seq_along(lambda)
+    )
+  
+  return(coefDf)
+}
+
+coefDf = purrr::map_dfr(
+  .x = listGlmnet, 
+  .f = coef2Df, 
+  .id = "alpha") %>% 
+  dplyr::mutate(
+    alpha = as.numeric(alpha),
+    absCoef = abs(coef),
+    size = ifelse(absCoef > 1, 1, absCoef),
+    selected = absCoef < 1e-4
+  ) %>% 
+  group_by(alpha, variables) %>% 
+  dplyr::mutate(
+    maxAbsCoef = max(absCoef),
+    scaleCoef = absCoef/maxAbsCoef
+  )
+
+coefDf %>% 
+  ggplot(aes(x = nLambda, y = coef)) +
+  # geom_point(aes(colour = size)) +
+  geom_line(aes(group = variables)) +
+  geom_hline(yintercept = 0, colour = "gray") +
+  scale_color_distiller(palette = "Spectral") +
+  facet_grid(~alpha, scales = "free")
+
+
+
+coefDf %>% 
+  ggplot(aes(x = lambda, y = coef)) +
+  geom_point(aes(colour = size)) +
+  # geom_line(aes(group = variables)) +
+  geom_hline(yintercept = 0, colour = "gray") +
+  scale_color_distiller(palette = "Spectral") +
+  facet_grid(~alpha, scales = "free")
+  # facet_grid(variables~alpha, scales = "free")
+
+
+coefDf %>% 
+  ggplot(aes(x = nLambda, y = coef, colour = scaleCoef)) +
+  # geom_point() +
+  geom_line(size = 2) +
+  geom_hline(yintercept = 0, colour = "gray") +
+  scale_color_distiller(palette = "Spectral") +
+  facet_grid(variables~alpha, scales = "free")
+
+coefDf %>% 
+  ggplot(aes(x = lambda, y = coef, colour = scaleCoef)) +
+  # geom_point() +
+  geom_line(size = 2) +
+  geom_hline(yintercept = 0, colour = "gray") +
+  scale_color_distiller(palette = "Spectral") +
+  facet_grid(variables~alpha, scales = "free")
+
+
+coefDf %>% 
+  ggplot(aes(x = lambda, y = coef, colour = absCoef)) +
+  # geom_point() +
+  geom_line(size = 2) +
+  geom_hline(yintercept = 0, colour = "gray") +
+  scale_color_distiller(palette = "Spectral") +
+  facet_grid(variables~alpha, scales = "free")
+
+
+```
+

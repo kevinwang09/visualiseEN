@@ -94,8 +94,8 @@ coefDf %>%
 
 coefDf %>% 
   ggplot(aes(x = lambda, y = coef, colour = scaleCoef)) +
-  geom_point() +
-  # geom_line(aes(size = size, group = variables)) +
+  # geom_point() +
+  geom_line(size = 2) +
   geom_hline(yintercept = 0, colour = "gray") +
   scale_color_distiller(palette = "Spectral") +
   facet_grid(variables~alpha, scales = "free")
