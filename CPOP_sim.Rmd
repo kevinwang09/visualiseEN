@@ -5,6 +5,9 @@ date: "21/09/2019"
 output: html_document
 ---
 
+The deficiency of this simulation is that there is no validation data for CPOP because it used up both data.
+
+
 ```{r}
 library(tidyverse)
 library(mvtnorm)
@@ -76,10 +79,10 @@ ggcorrplot(cor1,
 beta1 = rbeta(p, shape1 = 0.1, shape2 = 0.5)
 switch_beta1 = rbinom(p, size = 1, prob = 0.2)
 beta2 = map2_dbl(.x = beta1, 
-               .y = switch_beta1,
-               .f = ~ ifelse(.y == 1, 
-                             rbeta(1, shape1 = 0.1, shape2 = 0.5),
-                             .x))
+                 .y = switch_beta1,
+                 .f = ~ ifelse(.y == 1, 
+                               rbeta(1, shape1 = 0.1, shape2 = 0.5),
+                               .x))
 
 coef_tibble = coef_tibble %>% 
   dplyr::mutate(beta1, switch_beta1, beta2)
@@ -155,11 +158,12 @@ plot(pred_naive1_x2, pred_naive2_x2)
 ```{r}
 library(CPOP)
 CPOP_model = CPOP::cpop_model(z1 = x1, 
-                 z2 = x2, 
-                 y1 = y1, 
-                 y2 = y2, 
-                 w = CPOP::compute_weights(x1, x2),
-                 family = "gaussian")
+                              z2 = x2, 
+                              y1 = y1, 
+                              y2 = y2, 
+                              w = CPOP::compute_weights(x1, x2),
+                              alpha = 0.1,
+                              family = "gaussian")
 
 coef_tibble = coef_tibble %>% 
   dplyr::mutate(
@@ -177,11 +181,104 @@ CPOP::plot_cpop_coef(CPOP_model, type = "point")
 CPOP::plot_cpop_coef(CPOP_model, type = "bar")
 
 pred_cpop1_x1 = CPOP::predict_cpop(CPOP_model, newz = x1, 
-                                  s = "lambda.min", model_number = 1)
+                                   s = "lambda.min", model_number = 1)
 pred_cpop2_x1 = CPOP::predict_cpop(CPOP_model, newz = x1,
                                    s = "lambda.min", model_number = 2)
 
 plot(pred_cpop1_x1, pred_cpop2_x1)
 cor(pred_cpop1_x1, pred_cpop2_x1)
+abline(a = 0, b = 1, col = "red")
+```
+
+# Integration of CPOP with prediction correlation lambda selection 
+
+```{r}
+pred_cpop1_x1_mat = predict(CPOP_model$en1, 
+                            newx = x1[,CPOP_model$feature], 
+                            s = CPOP_model$en1$lambda)
+pred_cpop2_x1_mat = predict(CPOP_model$en2, 
+                            newx = x1[,CPOP_model$feature], 
+                            s = CPOP_model$en1$lambda)
+
+pred_cpop1_x2_mat = predict(CPOP_model$en1, 
+                            newx = x2[,CPOP_model$feature], 
+                            s = CPOP_model$en1$lambda)
+pred_cpop2_x2_mat = predict(CPOP_model$en2, 
+                            newx = x2[,CPOP_model$feature], 
+                            s = CPOP_model$en1$lambda)
+##############################################
+one_vs_mat_id = function(x, mat){
+  purrr::map_dbl(1:100,
+                 ~ tryCatch(identityDist(x, mat[,.x]), error = function(e){10}))
+}
+
+
+id_pred_x1_twocpop = purrr::map(1:100,
+                                ~ one_vs_mat_id(
+                                  pred_cpop1_x1_mat[,.x],
+                                  pred_cpop2_x1_mat)) %>%
+  do.call(cbind, .) %>% abs()
+
+which(id_pred_x1_twocpop == min(id_pred_x1_twocpop), arr.ind = TRUE)
+
+id_pred_x1_twocpop %>% 
+  d3heatmap::d3heatmap(Rowv = FALSE, Colv = FALSE)
+
+plot(pred_cpop1_x1_mat[,1], pred_cpop2_x1_mat[,3])
+abline(a = 0, b = 1, col = "red")
+cor(pred_cpop1_x1_mat[,1], pred_cpop2_x1_mat[,3])
+####################################################
+new_iden_dist = function(x, y){
+  CPOP::identityDist(x, y) +
+    abs(e1071::skewness(x-y))
+}
+
+
+one_vs_mat_nid = function(x, mat){
+  purrr::map_dbl(1:100,
+                 ~ tryCatch(new_iden_dist(x, mat[,.x]), error = function(e){10}))
+}
+
+
+nid_pred_x1_twocpop = purrr::map(1:100,
+                                ~ one_vs_mat_nid(
+                                  pred_cpop1_x1_mat[,.x],
+                                  pred_cpop2_x1_mat)) %>%
+  do.call(cbind, .) %>% abs()
+
+which(nid_pred_x1_twocpop == min(nid_pred_x1_twocpop), arr.ind = TRUE)
+
+nid_pred_x1_twocpop %>% 
+  d3heatmap::d3heatmap(Rowv = FALSE, Colv = FALSE, colors = "Blues")
+
+plot(pred_cpop1_x1_mat[,1], pred_cpop2_x1_mat[,6])
+abline(a = 0, b = 1, col = "red")
+cor(pred_cpop1_x1_mat[,1], pred_cpop2_x1_mat[,6])
+
+##################################################
+one_vs_mat_ttest = function(x, mat){
+  purrr::map_dbl(1:100,
+             ~ tryCatch(t.test(x, mat[,.x])$statistic, error = function(e){1000}))
+}
+
+ttest_pred_x1_twocpop = purrr::map(1:100,
+                                ~ one_vs_mat_ttest(
+                                  pred_cpop1_x1_mat[,.x],
+                                  pred_cpop2_x1_mat)) %>%
+  do.call(cbind, .) %>% abs()
+
+which(ttest_pred_x1_twocpop == min(ttest_pred_x1_twocpop), arr.ind = TRUE)
+
+ttest_pred_x1_twocpop %>% 
+  d3heatmap::d3heatmap(Rowv = FALSE, Colv = FALSE, colors = "Blues")
+##################################################
+
+plot(log(CPOP_model$en1$lambda), ttest_pred_x1_twocpop[52, ], type = "l")
+abline(v = log(CPOP_model$en1$lambda.min), col = "red")
+abline(v = log(CPOP_model$en1$lambda[64]), col = "blue")
+
+plot(pred_cpop1_x1_mat[,52], pred_cpop2_x1_mat[,64])
+abline(a = 0, b = 1, col = "red")
+cor(pred_cpop1_x1_mat[,52], pred_cpop2_x1_mat[,64])
 ```
 
