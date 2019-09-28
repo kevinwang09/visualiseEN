@@ -1,0 +1,212 @@
+---
+title: "EN Collinear"
+author: "Kevin Wang"
+date: "28/09/2019"
+output:
+  html_document:
+    code_folding: show
+    fig_height: 8
+    fig_width: 8
+    toc: yes
+    number_sections: true
+    toc_depth: 3
+    toc_float: yes
+editor_options: 
+  chunk_output_type: console
+---
+
+
+# Generate data
+```{r}
+library(tidyverse)
+library(mvtnorm)
+library(glmnet)
+library(directlabels)
+
+
+n = 1000
+set.seed(1234)
+a = rnorm(n)
+b = rnorm(n)
+c = rnorm(n)
+
+x1 = a-b
+x2 = b-c
+x3 = a-c
+
+cor(cbind(x1, x2, x3))
+pairs(cbind(x1, x2, x3))
+
+e = rnorm(n)
+
+## y equals to x1 multiple by coef of 1 plus some noise
+y = (x1) + e
+```
+
+# Regression with the only data generating variable
+```{r}
+## Least squares
+summary(lm(y ~ x1))
+
+## Lasso regression
+lasso_x1 = glmnet::cv.glmnet(
+  x = cbind(Int = 1, x1), 
+  y = y, alpha = 1, intercept = FALSE)
+
+coef(lasso_x1)
+
+## Ridge regression
+glmnet_x1 = glmnet::cv.glmnet(
+  x = cbind(Int = 1, x1), 
+  y = y, alpha = 0, intercept = FALSE)
+
+coef(glmnet_x1)
+```
+
+As expected, nothing goes wrong with this type of regression. 
+
+
+# Introducing perfect collinearity to least squares
+
++ When both `x1` and `x2` are included, then `x2` is considered to be non-significant, as expected.
+
++ When `x1`, `x2` and `x3` are included, then `x3` is not identifix1le using least squares regression, as expected. In `R`, this is shown as NA. 
+
+```{r}
+summary(lm(y ~ x1 + x2))
+
+summary(lm(y ~ x1 + x2 + x3))
+```
+
+
+# Introducing perfect collinearity to Lasso {#collinear-Lasso}
+
+Lasso still picks the only variable. Which is re-assuring in some sense? Because it went for the most parsimonious model with `x1`, not the model with `x3` minus `x2`. 
+
+```{r}
+lasso_all_three = glmnet::cv.glmnet(
+  x = cbind(x1, x2, x3), 
+  y = y, alpha = 1)
+
+coef(lasso_all_three)
+```
+
+
+But if we do leave out the the true variable `x1`, then the coefficient values of `x2` and `x3` are almost identical in magnitude as that of `x1` but in opposite signs. This is kinda expected. 
+
+```{r}
+lasso_only_two = glmnet::cv.glmnet(
+  x = cbind(x2, x3), 
+  y = y, alpha = 1)
+
+coef(lasso_only_two)
+```
+
+
+
+
+# Introducing perfect collinearity to Ridge 
+
+It is a bit harder to interpret Ridge. It seems like that the coef of x2 and x3 are half that of x1, but also opposite in sign. 
+A bit of maths seems that the sum of three coefficients when multiplied by 2/3 would yield a similar one to the coef when only one variable is included. 
+
+```{r}
+ridge_all_three = glmnet::cv.glmnet(
+  x = cbind(x1, x2, x3), 
+  y = y, alpha = 0)
+
+coef(ridge_all_three)
+sum(coef(ridge_all_three))
+sum(coef(ridge_all_three))/2*3 ## Mathematically seems to be doing the same job as only regressing upon x1. 
+```
+
+
+Fitting x2 and x3 has similar result as the Lasso. 
+
+```{r}
+ridge_only_two = glmnet::cv.glmnet(
+  x = cbind(x2, x3), 
+  y = y, alpha = 0)
+
+coef(ridge_only_two)
+sum(coef(ridge_only_two)) 
+```
+
+# Discussion
+
+In between step 1 and step 2 of CPOP, it might be better to run a Lasso to eliminate the highly collinear features? Perhaps this will further improve on the stability of estimation. 
+
+
+# Extensions will a general Elastic net model perform the same thing as Lasso in Section [Collinear Lasso](#collinear-Lasso)
+
+Answer: only if alpha is large enough. 
+
+```{r, echo = FALSE, fig.height=8, fig.width=12}
+listAlpha = seq(0, 1, length.out = 11) %>% round(2)
+listGlmnet = purrr::map(
+  listAlpha, 
+  ~ glmnet::glmnet(
+    x = cbind(x1, x2, x3),
+    y = y,
+    family = "gaussian", 
+    alpha = .x, 
+    nlambda = 300
+  )
+)
+
+names(listGlmnet) = listAlpha
+
+coef2Df = function(cvglmnetObj){
+  coefMat = as.matrix(coef(cvglmnetObj, s = cvglmnetObj$lambda))
+  colnames(coefMat) = cvglmnetObj$lambda
+  coefDf = reshape2::melt(
+    coefMat,
+    varnames = c("variables", "lambda"),
+    value.name = "coef") %>% 
+    tibble::as_tibble() %>% 
+    dplyr::mutate(
+      nLambda = seq_along(lambda)
+    )
+  
+  return(coefDf)
+}
+
+coefDf = purrr::map_dfr(
+  .x = listGlmnet, 
+  .f = coef2Df, 
+  .id = "alpha") %>% 
+  dplyr::mutate(
+    alpha = as.numeric(alpha),
+    absCoef = abs(coef),
+    size = ifelse(absCoef > 1, 1, absCoef),
+    selected = absCoef < 1e-4,
+    variables = ifelse(variables == "(Intercept)", 
+                       "Int", as.character(variables))
+  ) %>% 
+  group_by(alpha, variables) %>% 
+  dplyr::mutate(
+    maxAbsCoef = max(absCoef),
+    scaleCoef = absCoef/maxAbsCoef
+  ) %>% ungroup()
+
+
+
+coefDf %>% 
+  ggplot(aes(x = nLambda, y = coef, 
+             label = variables)) +
+  # geom_point(aes(colour = size)) +
+  geom_line(aes(group = variables)) +
+  geom_hline(yintercept = 0, colour = "gray") +
+  directlabels::geom_dl( method=list("last.points")) +
+  scale_color_distiller(palette = "Spectral") +
+  xlim(0, 1000) +
+  facet_grid(~alpha, scales = "free", labeller = label_both)
+```
+
+
+# Session Info
+
+```{r}
+sessioninfo::session_info()
+```
+

@@ -15,7 +15,7 @@ library(glmnet)
 library(Matrix)
 
 theme_set(theme_classic(18) +
-            theme(legend.position = "bottom"))
+          theme(legend.position = "bottom"))
 ```
 
 
@@ -241,9 +241,9 @@ one_vs_mat_nid = function(x, mat){
 
 
 nid_pred_x1_twocpop = purrr::map(1:100,
-                                ~ one_vs_mat_nid(
-                                  pred_cpop1_x1_mat[,.x],
-                                  pred_cpop2_x1_mat)) %>%
+                                 ~ one_vs_mat_nid(
+                                   pred_cpop1_x1_mat[,.x],
+                                   pred_cpop2_x1_mat)) %>%
   do.call(cbind, .) %>% abs()
 
 which(nid_pred_x1_twocpop == min(nid_pred_x1_twocpop), arr.ind = TRUE)
@@ -258,13 +258,13 @@ cor(pred_cpop1_x1_mat[,1], pred_cpop2_x1_mat[,6])
 ##################################################
 one_vs_mat_ttest = function(x, mat){
   purrr::map_dbl(1:100,
-             ~ tryCatch(t.test(x, mat[,.x])$statistic, error = function(e){1000}))
+                 ~ tryCatch(t.test(x, mat[,.x])$statistic, error = function(e){1000}))
 }
 
 ttest_pred_x1_twocpop = purrr::map(1:100,
-                                ~ one_vs_mat_ttest(
-                                  pred_cpop1_x1_mat[,.x],
-                                  pred_cpop2_x1_mat)) %>%
+                                   ~ one_vs_mat_ttest(
+                                     pred_cpop1_x1_mat[,.x],
+                                     pred_cpop2_x1_mat)) %>%
   do.call(cbind, .) %>% abs()
 
 which(ttest_pred_x1_twocpop == min(ttest_pred_x1_twocpop), arr.ind = TRUE)
